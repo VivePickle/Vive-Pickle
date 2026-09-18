@@ -4,7 +4,7 @@ from datetime import datetime, date
 
 st.set_page_config(page_title="Pickleball Session Manager", layout="wide", page_icon="🏓")
 
-# Initialize persistent session state variables
+# Initialize persistent session state
 if "venue" not in st.session_state:
     st.session_state.venue = "Local Pickleball Club"
 if "session_date" not in st.session_state:
@@ -18,27 +18,23 @@ if "archived_sessions" not in st.session_state:
 
 st.title("🏓 Pickleball Session Manager")
 
-# Sidebar: Session & Venue Setup
+# Sidebar
 with st.sidebar:
     st.header("1. Current Session Details")
     st.session_state.session_date = st.date_input("Session Date", st.session_state.session_date)
     st.session_state.venue = st.text_input("Venue Name", st.session_state.venue)
     
-    # Close & Archive Session Button
     if st.button("🔒 Close Current Session & Start New", type="primary"):
         if st.session_state.current_session_matches:
-            # Save the active session into archive
             session_summary = {
-                "Date": st.session_state.session_date.strftime("%Y-%m-%d"),
+                "Date": st.session_state.session_date,
                 "Venue": st.session_state.venue,
                 "Matches": list(st.session_state.current_session_matches)
             }
             st.session_state.archived_sessions.append(session_summary)
-            
-            # Reset active session
             st.session_state.current_session_matches = []
             st.session_state.players = {}
-            st.success("Session closed and archived! Ready for a new session.")
+            st.success("Session archived! Ready for a new session.")
             st.rerun()
         else:
             st.warning("No matches played in this session to close.")
@@ -63,10 +59,51 @@ with st.sidebar:
 
 st.caption(f"📅 **Date:** {st.session_state.session_date} | 📍 **Venue:** {st.session_state.venue}")
 
-# Main Tabs
-tab1, tab2, tab3 = st.tabs(["🎾 Active Games", "🏆 Current Session Results", "📊 All Archived Sessions"])
+# Helper Function: Calculate Individual Win/Loss Stats
+def calculate_player_stats(matches_list):
+    stats = {}
+    for m in matches_list:
+        team_a = [p.strip() for p in m["Team A"].split(",")]
+        team_b = [p.strip() for p in m["Team B"].split(",")]
+        score_a, score_b = m["Score A"], m["Score B"]
+        
+        all_match_players = team_a + team_b
+        for p in all_match_players:
+            if p not in stats:
+                stats[p] = {"Played": 0, "Wins": 0, "Losses": 0, "Draws": 0, "Points": 0}
+            stats[p]["Played"] += 1
+        
+        if score_a > score_b:
+            for p in team_a:
+                stats[p]["Wins"] += 1
+                stats[p]["Points"] += score_a
+            for p in team_b:
+                stats[p]["Losses"] += 1
+                stats[p]["Points"] += score_b
+        elif score_b > score_a:
+            for p in team_b:
+                stats[p]["Wins"] += 1
+                stats[p]["Points"] += score_b
+            for p in team_a:
+                stats[p]["Losses"] += 1
+                stats[p]["Points"] += score_a
+        else:
+            for p in all_match_players:
+                stats[p]["Draws"] += 1
 
-# TAB 1: Game Generator & Score Logging
+    if not stats:
+        return pd.DataFrame()
+
+    df_stats = pd.DataFrame.from_dict(stats, orient="index")
+    df_stats["Win Rate %"] = ((df_stats["Wins"] / df_stats["Played"]) * 100).round(1)
+    df_stats = df_stats.sort_values(by=["Wins", "Win Rate %", "Points"], ascending=False)
+    df_stats.index.name = "Player"
+    return df_stats.reset_index()
+
+# Main Tabs
+tab1, tab2, tab3 = st.tabs(["🎾 Active Games", "🏆 Current Session", "📊 Player Win/Loss Leaderboards"])
+
+# TAB 1: Game Generator
 with tab1:
     st.header("Game Organizer")
     game_mode = st.radio("Select Mode", ["Doubles (4 Players)", "Singles (2 Players)"], horizontal=True)
@@ -75,9 +112,8 @@ with tab1:
     available_players = [p for p, data in st.session_state.players.items() if data["status"] == "Available"]
     
     if len(available_players) < needed_players:
-        st.info(f"Need at least {needed_players} players to generate a game. Currently available: {len(available_players)}")
+        st.info(f"Need at least {needed_players} players. Currently available: {len(available_players)}")
     else:
-        # Fair Play Algorithm: Sort players by FEWEST games played
         sorted_players = sorted(available_players, key=lambda p: st.session_state.players[p]["games_played"])
         selected_players = sorted_players[:needed_players]
         
@@ -91,7 +127,6 @@ with tab1:
             team_b = [selected_players[1]]
             st.success(f"**Team A:** {team_a[0]}  🆚  **Team B:** {team_b[1]}")
         
-        # Log Score Section
         st.markdown("### Record Score")
         col_score1, col_score2 = st.columns(2)
         score_a = col_score1.number_input(f"Team A Score ({', '.join(team_a)})", min_value=0, max_value=30, value=11)
@@ -102,6 +137,7 @@ with tab1:
                 st.session_state.players[p]["games_played"] += 1
             
             record = {
+                "Date": st.session_state.session_date,
                 "Time": datetime.now().strftime("%H:%M:%S"),
                 "Mode": "Doubles" if needed_players == 4 else "Singles",
                 "Team A": ", ".join(team_a),
@@ -115,22 +151,45 @@ with tab1:
             st.success("Result Saved!")
             st.rerun()
 
-# TAB 2: Current Session Leaderboard
+# TAB 2: Current Session Matches
 with tab2:
-    st.header(f"Results for Session: {st.session_state.session_date}")
+    st.header(f"Session Matches: {st.session_state.session_date}")
     if st.session_state.current_session_matches:
-        df_current = pd.DataFrame(st.session_state.current_session_matches)
-        st.dataframe(df_current, use_container_width=True)
+        st.dataframe(pd.DataFrame(st.session_state.current_session_matches), use_container_width=True)
     else:
         st.write("No matches recorded for this active session yet.")
 
-# TAB 3: Historical & Archived Sessions
+# TAB 3: Win/Loss Leaderboards
 with tab3:
-    st.header("Archived Sessions History")
-    if st.session_state.archived_sessions:
-        for idx, sess in enumerate(reversed(st.session_state.archived_sessions)):
-            with st.expander(f"📅 Session: {sess['Date']} @ {sess['Venue']}"):
-                df_archive = pd.DataFrame(sess["Matches"])
-                st.dataframe(df_archive, use_container_width=True)
+    st.header("Player Performance Leaderboard")
+    
+    # Collect all historical matches
+    all_matches = list(st.session_state.current_session_matches)
+    for sess in st.session_state.archived_sessions:
+        all_matches.extend(sess["Matches"])
+        
+    if all_matches:
+        time_filter = st.selectbox("Filter Leaderboard By:", ["All Time", "This Week", "This Month"])
+        now = date.today()
+        
+        filtered_matches = []
+        for m in all_matches:
+            m_date = m["Date"] if isinstance(m["Date"], date) else datetime.strptime(str(m["Date"]), "%Y-%m-%d").date()
+            
+            if time_filter == "This Week":
+                if m_date.isocalendar()[1] == now.isocalendar()[1] and m_date.year == now.year:
+                    filtered_matches.append(m)
+            elif time_filter == "This Month":
+                if m_date.month == now.month and m_date.year == now.year:
+                    filtered_matches.append(m)
+            else:
+                filtered_matches.append(m)
+
+        leaderboard_df = calculate_player_stats(filtered_matches)
+        
+        if not leaderboard_df.empty:
+            st.dataframe(leaderboard_df, use_container_width=True)
+        else:
+            st.info("No match data matches the selected time frame.")
     else:
-        st.write("No closed/archived sessions yet. Once you click 'Close Current Session', it will appear here.")
+        st.write("No match history available yet.")
