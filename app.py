@@ -101,7 +101,12 @@ def calculate_player_stats(matches_list):
     return df_stats.reset_index()
 
 # Main Tabs
-tab1, tab2, tab3 = st.tabs(["🎾 Active Games", "🏆 Current Session", "📊 Player Win/Loss Leaderboards"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🎾 Active Games", 
+    "🏆 Current Session", 
+    "📅 Scores by Date", 
+    "📊 Player Win/Loss Leaderboards"
+])
 
 # TAB 1: Game Generator
 with tab1:
@@ -137,8 +142,9 @@ with tab1:
                 st.session_state.players[p]["games_played"] += 1
             
             record = {
-                "Date": st.session_state.session_date,
+                "Date": str(st.session_state.session_date),
                 "Time": datetime.now().strftime("%H:%M:%S"),
+                "Venue": st.session_state.venue,
                 "Mode": "Doubles" if needed_players == 4 else "Singles",
                 "Team A": ", ".join(team_a),
                 "Score A": score_a,
@@ -153,17 +159,45 @@ with tab1:
 
 # TAB 2: Current Session Matches
 with tab2:
-    st.header(f"Session Matches: {st.session_state.session_date}")
+    st.header(f"Active Session Matches: {st.session_state.session_date}")
     if st.session_state.current_session_matches:
         st.dataframe(pd.DataFrame(st.session_state.current_session_matches), use_container_width=True)
     else:
         st.write("No matches recorded for this active session yet.")
 
-# TAB 3: Win/Loss Leaderboards
+# TAB 3: Scores Stored by Date
 with tab3:
+    st.header("Match Scores Logged by Date")
+    
+    # Collect all matches across current and archived sessions
+    all_game_records = list(st.session_state.current_session_matches)
+    for sess in st.session_state.archived_sessions:
+        all_game_records.extend(sess["Matches"])
+        
+    if all_game_records:
+        df_all_games = pd.DataFrame(all_game_records)
+        
+        # Unique list of session dates available
+        unique_dates = sorted(list(set(df_all_games["Date"].astype(str))), reverse=True)
+        selected_date = st.selectbox("Select Session Date:", ["All Dates"] + unique_dates)
+        
+        if selected_date != "All Dates":
+            filtered_games = df_all_games[df_all_games["Date"].astype(str) == selected_date]
+        else:
+            filtered_games = df_all_games
+            
+        st.subheader(f"Matches for {selected_date}")
+        st.dataframe(
+            filtered_games[["Date", "Time", "Venue", "Mode", "Team A", "Score A", "Score B", "Team B", "Winner"]],
+            use_container_width=True
+        )
+    else:
+        st.info("No games have been played or logged yet.")
+
+# TAB 4: Win/Loss Leaderboards
+with tab4:
     st.header("Player Performance Leaderboard")
     
-    # Collect all historical matches
     all_matches = list(st.session_state.current_session_matches)
     for sess in st.session_state.archived_sessions:
         all_matches.extend(sess["Matches"])
@@ -174,7 +208,7 @@ with tab3:
         
         filtered_matches = []
         for m in all_matches:
-            m_date = m["Date"] if isinstance(m["Date"], date) else datetime.strptime(str(m["Date"]), "%Y-%m-%d").date()
+            m_date = datetime.strptime(str(m["Date"]), "%Y-%m-%d").date() if isinstance(m["Date"], str) else m["Date"]
             
             if time_filter == "This Week":
                 if m_date.isocalendar()[1] == now.isocalendar()[1] and m_date.year == now.year:
